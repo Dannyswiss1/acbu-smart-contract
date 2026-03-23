@@ -117,16 +117,36 @@ pub fn median(values: &[i128]) -> Option<i128> {
     if values.is_empty() {
         return None;
     }
-    
-    let mut sorted = values.to_vec();
-    sorted.sort();
-    
-    let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
-        Some((sorted[mid - 1] + sorted[mid]) / 2)
+
+    let mid = values.len() / 2;
+    if values.len() % 2 == 0 {
+        let lower = nth_smallest(values, mid - 1)?;
+        let upper = nth_smallest(values, mid)?;
+        Some((lower + upper) / 2)
     } else {
-        Some(sorted[mid])
+        nth_smallest(values, mid)
     }
+}
+
+fn nth_smallest(values: &[i128], target_index: usize) -> Option<i128> {
+    for &candidate in values {
+        let mut less_than = 0usize;
+        let mut equal_to = 0usize;
+
+        for &value in values {
+            if value < candidate {
+                less_than += 1;
+            } else if value == candidate {
+                equal_to += 1;
+            }
+        }
+
+        if less_than <= target_index && target_index < less_than + equal_to {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 /// Calculate percentage deviation
