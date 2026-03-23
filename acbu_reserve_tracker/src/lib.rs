@@ -26,6 +26,15 @@ pub struct DataKey {
     pub target_ratio: Symbol,
 }
 
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ReserveUpdateEvent {
+    pub currency: CurrencyCode,
+    pub amount: i128,
+    pub value_usd: i128,
+    pub timestamp: u64,
+}
+
 const DATA_KEY: DataKey = DataKey {
     admin: symbol_short!("ADMIN"),
     acbu_token: symbol_short!("ACBU_TKN"),
@@ -91,8 +100,19 @@ impl ReserveTrackerContract {
         // Update reserves map
         let mut reserves: Map<CurrencyCode, ReserveData> =
             env.storage().instance().get(&DATA_KEY.reserves).unwrap_or(Map::new(&env));
-        reserves.set(currency, reserve_data);
+        reserves.set(currency.clone(), reserve_data);
         env.storage().instance().set(&DATA_KEY.reserves, &reserves);
+
+        // Emit Event
+        env.events().publish(
+            (symbol_short!("reserve"), currency.clone()),
+            ReserveUpdateEvent {
+                currency,
+                amount,
+                value_usd,
+                timestamp: current_time,
+            },
+        );
     }
 
     /// Get reserve data for a currency
@@ -158,8 +178,6 @@ impl ReserveTrackerContract {
 
     fn check_admin(env: &Env) {
         let admin: Address = env.storage().instance().get(&DATA_KEY.admin).unwrap();
-        if admin != env.invoker() {
-            panic!("Unauthorized: admin only");
-        }
+        admin.require_auth();
     }
 }
