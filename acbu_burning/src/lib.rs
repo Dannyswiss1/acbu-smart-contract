@@ -114,8 +114,8 @@ impl BurningContract {
 
         // Calculate local currency amount
         let acbu_after_fee = calculate_amount_after_fee(acbu_amount, fee_rate);
-        let usd_value = (acbu_after_fee * DECIMALS) / DECIMALS; // Assuming 1:1 ACBU:USD
-        let local_amount = (usd_value * DECIMALS) / currency_rate;
+        // 1:1 ACBU:USD at current fixed rate (`currency_rate == DECIMALS`)
+        let local_amount = (acbu_after_fee * DECIMALS) / currency_rate;
 
         // Burn ACBU from user
         let acbu_client = soroban_sdk::token::Client::new(&env, &acbu_token);
