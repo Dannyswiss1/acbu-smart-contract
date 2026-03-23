@@ -1,12 +1,13 @@
 #![cfg(test)]
 
-use super::*;
-use soroban_sdk::{testutils::Address as _, Address, Env, Map, Vec};
+use acbu_oracle::{OracleContract, OracleContractClient};
+use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env, Map, Vec};
 use shared::CurrencyCode;
 
 #[test]
 fn test_initialize() {
     let env = Env::default();
+    env.mock_all_auths();
     let admin = Address::generate(&env);
     let validator1 = Address::generate(&env);
     let validator2 = Address::generate(&env);
@@ -19,8 +20,8 @@ fn test_initialize() {
     
     let min_signatures = 2u32;
     
-    let ngn = CurrencyCode::new("NGN");
-    let kes = CurrencyCode::new("KES");
+    let ngn = CurrencyCode::new(&env, "NGN");
+    let kes = CurrencyCode::new(&env, "KES");
     let mut currencies = Vec::new(&env);
     currencies.push_back(ngn.clone());
     currencies.push_back(kes.clone());
@@ -48,6 +49,8 @@ fn test_initialize() {
 #[test]
 fn test_update_rate() {
     let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 1_000_000); // Exceed 6h interval
     let admin = Address::generate(&env);
     let validator = Address::generate(&env);
     
@@ -56,7 +59,7 @@ fn test_update_rate() {
     
     let min_signatures = 1u32;
     
-    let ngn = CurrencyCode::new("NGN");
+    let ngn = CurrencyCode::new(&env, "NGN");
     let mut currencies = Vec::new(&env);
     currencies.push_back(ngn.clone());
     
@@ -80,7 +83,7 @@ fn test_update_rate() {
     sources.push_back(1235000i128);
     sources.push_back(1239000i128);
     
-    client.update_rate(&ngn, &rate, &sources, &env.ledger().timestamp());
+    client.update_rate(&validator, &ngn, &rate, &sources, &env.ledger().timestamp());
     
     let stored_rate = client.get_rate(&ngn);
     assert_eq!(stored_rate, rate);
