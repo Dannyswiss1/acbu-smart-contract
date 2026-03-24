@@ -1,7 +1,12 @@
 #![cfg(test)]
 
 use acbu_minting::{MintingContract, MintingContractClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use shared::{MintEvent, MAX_MINT_AMOUNT};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, Events},
+    Address, Env, FromVal, IntoVal, String as SorobanString,
+};
 
 #[test]
 fn test_initialize() {
@@ -136,8 +141,12 @@ fn test_mint_from_usdc() {
     let client = MintingContractClient::new(&env, &contract_id);
 
     // Setup SAC Mocks: Minting contract is admin/issuer of ACBU to enable mint()
-    let usdc_token_id = env.register_stellar_asset_contract(admin.clone());
-    let acbu_token_id = env.register_stellar_asset_contract(contract_id.clone());
+    let usdc_token_id = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let acbu_token_id = env
+        .register_stellar_asset_contract_v2(contract_id.clone())
+        .address();
 
     let usdc_token_client = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_token_id);
     let usdc_client = soroban_sdk::token::Client::new(&env, &usdc_token_id);
@@ -156,29 +165,39 @@ fn test_mint_from_usdc() {
         &fee_rate,
     );
 
-    // Execute: 50 USDC deposit
+    // Execute: 50 USDC deposit (recipient is same as depositor)
     let mint_amount = 50 * 10_000_000;
-    let acbu_minted = client.mint_from_usdc(&mint_amount, &user);
+    let acbu_minted = client.mint_from_usdc(&user, &mint_amount, &user);
 
     // Verification
-    // 0.3% fee on 50 = 0.15. 50 - 0.15 = 49.85
-    let expected_acbu = 498_500_000; 
-    let expected_fee = 1_500_000;
-    
+    // 0.3% fee on 50 USDC: fee = 15_000_000; net = 485_000_000 (7-decimal units throughout)
+    let expected_fee = 15_000_000;
+    let expected_acbu = 485_000_000;
+
     assert_eq!(acbu_minted, expected_acbu);
     assert_eq!(acbu_client.balance(&user), expected_acbu);
     assert_eq!(usdc_client.balance(&user), 50 * 10_000_000);
 
     // Event Audit
     let events = env.events().all();
-    let last_event = events.last().unwrap();
-    // Event Structure: (symbol "mint", Address user) -> MintEvent
-    assert_eq!(last_event.0, (contract_id.clone(), (symbol_short!("mint"), user.clone()).into_val(&env)));
-    
-    let event_data: MintEvent = last_event.1.into_val(&env);
-    assert_eq!(event_data.usdc_amount, mint_amount);
-    assert_eq!(event_data.acbu_amount, expected_acbu);
-    assert_eq!(event_data.fee, expected_fee);
+    let mut found = false;
+    for event in events.iter() {
+        if event.0 != contract_id {
+            continue;
+        }
+        let topics = event.1;
+        if !topics.is_empty()
+            && soroban_sdk::Symbol::from_val(&env, &topics.get(0).unwrap()) == symbol_short!("mint")
+        {
+            let event_data: MintEvent = event.2.into_val(&env);
+            assert_eq!(event_data.usdc_amount, mint_amount);
+            assert_eq!(event_data.acbu_amount, expected_acbu);
+            assert_eq!(event_data.fee, expected_fee);
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "expected mint event");
 }
 
 #[test]
@@ -190,12 +209,14 @@ fn test_mint_from_fiat() {
     let oracle = Address::generate(&env);
     let reserve_tracker = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let fee_rate = 200; // 0.2%
+    let fee_rate = 20; // 0.2% (20 bps)
 
     let contract_id = env.register_contract(None, MintingContract);
     let client = MintingContractClient::new(&env, &contract_id);
 
-    let acbu_token_id = env.register_stellar_asset_contract(contract_id.clone());
+    let acbu_token_id = env
+        .register_stellar_asset_contract_v2(contract_id.clone())
+        .address();
     let usdc_token_id = Address::generate(&env); // Placeholder fixture
     let acbu_client = soroban_sdk::token::Client::new(&env, &acbu_token_id);
 
@@ -213,7 +234,13 @@ fn test_mint_from_fiat() {
     let fintech_tx_id = SorobanString::from_str(&env, "partner_id_001");
 
     // Must be admin to initiate fiat mint simulation
-    let acbu_minted = client.mint_from_fiat(&currency, &fiat_amount, &recipient, &fintech_tx_id);
+    let acbu_minted = client.mint_from_fiat(
+        &admin,
+        &currency,
+        &fiat_amount,
+        &recipient,
+        &fintech_tx_id,
+    );
 
     // Verification
     // 0.2% fee on 1000 = 2. 1000 - 2 = 998
@@ -223,15 +250,69 @@ fn test_mint_from_fiat() {
 
     // Event Audit
     let events = env.events().all();
-    let last_event = events.last().unwrap();
-    let event_data: MintEvent = last_event.1.into_val(&env);
-    assert_eq!(event_data.acbu_amount, expected_acbu);
-    // contains string partner_id_001
-    assert!(event_data.transaction_id.to_string().contains("partner_id_001"));
+    let mut found = false;
+    for event in events.iter() {
+        if event.0 != contract_id {
+            continue;
+        }
+        let topics = event.1;
+        if !topics.is_empty()
+            && soroban_sdk::Symbol::from_val(&env, &topics.get(0).unwrap()) == symbol_short!("mint")
+        {
+            let event_data: MintEvent = event.2.into_val(&env);
+            assert_eq!(event_data.acbu_amount, expected_acbu);
+            assert!(event_data.transaction_id.to_string().contains("mint_fiat_tx"));
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "expected mint event");
 }
 
 #[test]
-#[should_panic(expected = "Unauthorized")]
+#[should_panic(expected = "Invalid mint amount")]
+fn test_mint_from_fiat_exceeds_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let reserve_tracker = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let fee_rate = 0;
+
+    let contract_id = env.register_contract(None, MintingContract);
+    let client = MintingContractClient::new(&env, &contract_id);
+
+    let acbu_token_id = env
+        .register_stellar_asset_contract_v2(contract_id.clone())
+        .address();
+    let usdc_token_id = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &oracle,
+        &reserve_tracker,
+        &acbu_token_id,
+        &usdc_token_id,
+        &fee_rate,
+    );
+
+    let currency = SorobanString::from_str(&env, "NGN");
+    let fintech_tx_id = SorobanString::from_str(&env, "tx_max");
+    let too_large = MAX_MINT_AMOUNT + 1;
+
+    client.mint_from_fiat(
+        &admin,
+        &currency,
+        &too_large,
+        &recipient,
+        &fintech_tx_id,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized: admin only")]
 fn test_unauthorized_mint_panic() {
     let env = Env::default();
     env.mock_all_auths();
@@ -268,5 +349,5 @@ fn test_unauthorized_mint_panic() {
     // In soroban testing, the last generated address or current setup sets the invoker.
     // If check_admin_or_user runs, it will compare the invoker (Address 0 or similar) against admin/user.
     // To ensure it fails, we assume it's checking env.invoker()
-    attacker_client.mint_from_fiat(&currency, &amount, &recipient, &tx_id);
+    attacker_client.mint_from_fiat(&attacker, &currency, &amount, &recipient, &tx_id);
 }

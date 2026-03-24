@@ -162,16 +162,6 @@ impl MintingContract {
         admin.require_auth();
         Self::check_admin(&env, &admin);
 
-        // Validate amount
-        let min_amount: i128 = env
-            .storage()
-            .instance()
-            .get(&DATA_KEY.min_mint_amount)
-            .unwrap();
-        if amount < min_amount {
-            panic!("Invalid mint amount");
-        }
-
         // Get contract addresses
         let acbu_token: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
         let fee_rate: i128 = env.storage().instance().get(&DATA_KEY.fee_rate).unwrap();
@@ -181,6 +171,21 @@ impl MintingContract {
 
         // Convert fiat amount to USD
         let usd_value = (amount * currency_rate) / DECIMALS;
+
+        // Same min/max bounds as `mint_from_usdc` on USD-equivalent notional (7-decimal fixed point)
+        let min_amount: i128 = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.min_mint_amount)
+            .unwrap();
+        let max_amount: i128 = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.max_mint_amount)
+            .unwrap();
+        if usd_value < min_amount || usd_value > max_amount {
+            panic!("Invalid mint amount");
+        }
 
         // Get ACBU/USD rate
         let acbu_rate = DECIMALS; // 1:1 with USD initially
