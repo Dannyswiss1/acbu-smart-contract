@@ -156,7 +156,7 @@ impl BurningContract {
             panic!("Invalid burn amount");
         }
 
-        if recipient_accounts.len() == 0 {
+        if recipient_accounts.is_empty() {
             panic!("No recipient accounts provided");
         }
 
