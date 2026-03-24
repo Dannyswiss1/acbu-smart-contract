@@ -1,23 +1,16 @@
 #![no_std]
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, String as SorobanString,
-    Symbol, Vec,
+    Symbol,
 };
 
 use shared::{
-    calculate_amount_after_fee, calculate_fee, CurrencyCode, MintEvent,
+    calculate_amount_after_fee, calculate_fee, MintEvent,
     MIN_MINT_AMOUNT, MAX_MINT_AMOUNT, BASIS_POINTS, DECIMALS,
 };
 
 mod shared {
     pub use shared::*;
-}
-
-mod token {
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/soroban_token_contract.wasm",
-        sha256 = "0x0000000000000000000000000000000000000000000000000000000000000000"
-    );
 }
 
 #[contracttype]
@@ -89,19 +82,19 @@ impl MintingContract {
         Self::check_admin_or_user(&env, &recipient);
 
         // Validate amount
-        let min_amount = env.storage().instance().get(&DATA_KEY.min_mint_amount).unwrap();
-        let max_amount = env.storage().instance().get(&DATA_KEY.max_mint_amount).unwrap();
+        let min_amount: i128 = env.storage().instance().get(&DATA_KEY.min_mint_amount).unwrap();
+        let max_amount: i128 = env.storage().instance().get(&DATA_KEY.max_mint_amount).unwrap();
 
         if usdc_amount < min_amount || usdc_amount > max_amount {
             panic!("Invalid mint amount");
         }
 
         // Get contract addresses
-        let oracle = env.storage().instance().get(&DATA_KEY.oracle).unwrap();
-        let reserve_tracker = env.storage().instance().get(&DATA_KEY.reserve_tracker).unwrap();
-        let acbu_token = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
-        let usdc_token = env.storage().instance().get(&DATA_KEY.usdc_token).unwrap();
-        let fee_rate = env.storage().instance().get(&DATA_KEY.fee_rate).unwrap();
+        let _oracle: Address = env.storage().instance().get(&DATA_KEY.oracle).unwrap();
+        let _reserve_tracker: Address = env.storage().instance().get(&DATA_KEY.reserve_tracker).unwrap();
+        let acbu_token: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
+        let usdc_token: Address = env.storage().instance().get(&DATA_KEY.usdc_token).unwrap();
+        let fee_rate: i128 = env.storage().instance().get(&DATA_KEY.fee_rate).unwrap();
 
         // Get ACBU/USD rate from oracle
         // Note: In production, this would call the oracle contract
@@ -118,19 +111,20 @@ impl MintingContract {
         let acbu_amount = (usdc_after_fee * DECIMALS) / acbu_rate;
 
         // Transfer USDC from user to contract
-        let usdc_client = token::Client::new(&env, &usdc_token);
-        let caller = env.invoker();
-        usdc_client.transfer(&caller, &env.current_contract_address(), &usdc_amount);
+        // The recipient authorizes this call (checked above via check_admin_or_user)
+        // so USDC is pulled from the recipient.
+        let usdc_client = soroban_sdk::token::Client::new(&env, &usdc_token);
+        usdc_client.transfer(&recipient, &env.current_contract_address(), &usdc_amount);
 
         // Mint ACBU to recipient
-        let acbu_client = token::Client::new(&env, &acbu_token);
+        let acbu_client = soroban_sdk::token::StellarAssetClient::new(&env, &acbu_token);
         acbu_client.mint(&recipient, &acbu_amount);
 
         // Calculate fee
         let fee = calculate_fee(usdc_amount, fee_rate);
 
         // Emit MintEvent
-        let tx_id = SorobanString::from_str(&format!("mint_{}", env.ledger().sequence()));
+        let tx_id = SorobanString::from_str(&env, "mint");
         let mint_event = MintEvent {
             transaction_id: tx_id,
             user: recipient.clone(),
@@ -154,19 +148,38 @@ impl MintingContract {
         fintech_tx_id: SorobanString,
     ) -> i128 {
         Self::check_paused(&env);
-        Self::check_admin_or_user(&env, &recipient);
+        // Only the admin (trusted fintech backend) may confirm off-chain fiat deposits.
+        // Allowing the recipient to call this themselves would let anyone mint ACBU
+        // without a real fiat deposit.
+        Self::check_admin(&env);
+
+        // Validate inputs: reject empty identifiers that cannot correspond to real deposits.
+        if fintech_tx_id.len() == 0 {
+            panic!("Invalid fintech_tx_id");
+        }
+        if currency.len() == 0 {
+            panic!("Invalid currency");
+        }
+
+        // Replay protection: each fintech_tx_id must only be processed once.
+        // Reusing an ID would allow the same off-chain deposit event to mint ACBU
+        // multiple times.
+        let used_key = (symbol_short!("FTX_USED"), fintech_tx_id.clone());
+        if env.storage().persistent().has(&used_key) {
+            panic!("Transaction ID already processed");
+        }
 
         // Validate amount
-        let min_amount = env.storage().instance().get(&DATA_KEY.min_mint_amount).unwrap();
+        let min_amount: i128 = env.storage().instance().get(&DATA_KEY.min_mint_amount).unwrap();
         if amount < min_amount {
             panic!("Invalid mint amount");
         }
 
         // Get contract addresses
-        let oracle = env.storage().instance().get(&DATA_KEY.oracle).unwrap();
-        let reserve_tracker = env.storage().instance().get(&DATA_KEY.reserve_tracker).unwrap();
-        let acbu_token = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
-        let fee_rate = env.storage().instance().get(&DATA_KEY.fee_rate).unwrap();
+        let _oracle: Address = env.storage().instance().get(&DATA_KEY.oracle).unwrap();
+        let _reserve_tracker: Address = env.storage().instance().get(&DATA_KEY.reserve_tracker).unwrap();
+        let acbu_token: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
+        let fee_rate: i128 = env.storage().instance().get(&DATA_KEY.fee_rate).unwrap();
 
         // Get currency/USD rate from oracle
         // Note: In production, this would call the oracle contract
@@ -187,15 +200,20 @@ impl MintingContract {
         let usd_after_fee = calculate_amount_after_fee(usd_value, fee_rate);
         let acbu_amount = (usd_after_fee * DECIMALS) / acbu_rate;
 
+        // Mark the tx_id as used before minting (checks-effects-interactions pattern)
+        // to prevent any reentrancy-based double-spend via cross-contract calls.
+        env.storage().persistent().set(&used_key, &true);
+
         // Mint ACBU to recipient
-        let acbu_client = token::Client::new(&env, &acbu_token);
+        let acbu_client = soroban_sdk::token::StellarAssetClient::new(&env, &acbu_token);
         acbu_client.mint(&recipient, &acbu_amount);
 
         // Calculate fee
         let fee = calculate_fee(usd_value, fee_rate);
 
         // Emit MintEvent
-        let tx_id = SorobanString::from_str(&format!("mint_fiat_{}", fintech_tx_id));
+        // Use the fintech_tx_id directly as the event transaction identifier.
+        let tx_id = fintech_tx_id.clone();
         let mint_event = MintEvent {
             transaction_id: tx_id,
             user: recipient.clone(),
@@ -255,17 +273,14 @@ impl MintingContract {
 
     fn check_admin(env: &Env) {
         let admin: Address = env.storage().instance().get(&DATA_KEY.admin).unwrap();
-        if admin != env.invoker() {
-            panic!("Unauthorized: admin only");
-        }
+        admin.require_auth();
     }
 
-    fn check_admin_or_user(env: &Env, user: &Address) {
-        let admin: Address = env.storage().instance().get(&DATA_KEY.admin).unwrap();
-        let invoker = env.invoker();
-        if invoker != admin && invoker != *user {
-            panic!("Unauthorized");
-        }
+    fn check_admin_or_user(_env: &Env, user: &Address) {
+        // Require the user (recipient) to have authorized this call.
+        // In the Soroban auth model, the admin can also authorize on behalf of a user
+        // by acting as an authorizer in the invocation tree.
+        user.require_auth();
     }
 }
 

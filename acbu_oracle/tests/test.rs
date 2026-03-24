@@ -19,8 +19,8 @@ fn test_initialize() {
     
     let min_signatures = 2u32;
     
-    let ngn = CurrencyCode::new("NGN");
-    let kes = CurrencyCode::new("KES");
+    let ngn = CurrencyCode::new(&env, "NGN");
+    let kes = CurrencyCode::new(&env, "KES");
     let mut currencies = Vec::new(&env);
     currencies.push_back(ngn.clone());
     currencies.push_back(kes.clone());

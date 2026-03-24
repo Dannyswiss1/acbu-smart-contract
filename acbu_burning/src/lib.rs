@@ -13,13 +13,6 @@ mod shared {
     pub use shared::*;
 }
 
-mod token {
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/soroban_token_contract.wasm",
-        sha256 = "0x0000000000000000000000000000000000000000000000000000000000000000"
-    );
-}
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DataKey {
@@ -118,14 +111,14 @@ impl BurningContract {
         let local_amount = (usd_value * DECIMALS) / currency_rate;
 
         // Burn ACBU from caller
-        let acbu_client = token::Client::new(&env, &acbu_token);
+        let acbu_client = soroban_sdk::token::Client::new(&env, &acbu_token);
         acbu_client.burn(&caller, &acbu_amount);
 
         // Calculate fee
         let fee = calculate_fee(acbu_amount, fee_rate);
 
         // Emit BurnEvent
-        let tx_id = SorobanString::from_str(&format!("burn_{}", env.ledger().sequence()));
+        let tx_id = SorobanString::from_str(&env, &format!("burn_{}", env.ledger().sequence()));
         let burn_event = BurnEvent {
             transaction_id: tx_id,
             user: caller.clone(),
@@ -170,7 +163,7 @@ impl BurningContract {
         let amount_per_account = acbu_after_fee / (recipient_accounts.len() as i128);
 
         // Burn ACBU from caller
-        let acbu_client = token::Client::new(&env, &acbu_token);
+        let acbu_client = soroban_sdk::token::Client::new(&env, &acbu_token);
         acbu_client.burn(&caller, &acbu_amount);
 
         // Calculate local amounts for each currency
@@ -183,7 +176,7 @@ impl BurningContract {
             local_amounts.push_back(local_amount);
 
             // Emit BurnEvent for each currency
-            let tx_id = SorobanString::from_str(&format!(
+            let tx_id = SorobanString::from_str(&env, &format!(
                 "burn_basket_{}_{}",
                 env.ledger().sequence(),
                 account.currency.0

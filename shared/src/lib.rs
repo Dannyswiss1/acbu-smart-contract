@@ -6,8 +6,8 @@ use soroban_sdk::{contracttype, Address, String as SorobanString, Symbol};
 pub struct CurrencyCode(pub SorobanString);
 
 impl CurrencyCode {
-    pub fn new(code: &str) -> Self {
-        CurrencyCode(SorobanString::from_str(code))
+    pub fn new(env: &soroban_sdk::Env, code: &str) -> Self {
+        CurrencyCode(SorobanString::from_str(env, code))
     }
 }
 

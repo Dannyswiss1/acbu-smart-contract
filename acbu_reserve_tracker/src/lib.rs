@@ -9,13 +9,6 @@ mod shared {
     pub use shared::*;
 }
 
-mod token {
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/soroban_token_contract.wasm",
-        sha256 = "0x0000000000000000000000000000000000000000000000000000000000000000"
-    );
-}
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DataKey {
@@ -115,7 +108,7 @@ impl ReserveTrackerContract {
 
         // Get total ACBU supply
         let acbu_token: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
-        let acbu_client = token::Client::new(&env, &acbu_token);
+        let acbu_client = soroban_sdk::token::Client::new(&env, &acbu_token);
         let total_supply = acbu_client.balance(&env.current_contract_address());
 
         if total_supply == 0 {
