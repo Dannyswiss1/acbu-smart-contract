@@ -27,6 +27,7 @@ const SECONDS_PER_YEAR: i128 = 31_536_000;
 pub struct DepositLot {
     pub amount: i128,
     pub timestamp: u64,
+    pub term_seconds: u64,
 }
 
 #[contracttype]
@@ -90,6 +91,7 @@ impl SavingsVault {
         amount: i128,
         term_seconds: u64,
     ) -> Result<i128, soroban_sdk::Error> {
+        user.require_auth();
         let paused: bool = env
             .storage()
             .instance()
@@ -101,7 +103,9 @@ impl SavingsVault {
         if amount <= 0 {
             return Err(soroban_sdk::Error::from_contract_error(1002));
         }
-        user.require_auth();
+        if term_seconds == 0 {
+            return Err(soroban_sdk::Error::from_contract_error(1007));
+        }
 
         let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
         let client = soroban_sdk::token::Client::new(&env, &acbu);
@@ -116,6 +120,7 @@ impl SavingsVault {
         lots.push_back(DepositLot {
             amount,
             timestamp: env.ledger().timestamp(),
+            term_seconds,
         });
         env.storage().temporary().set(&key, &lots);
 
@@ -138,6 +143,8 @@ impl SavingsVault {
         term_seconds: u64,
         amount: i128,
     ) -> Result<(), soroban_sdk::Error> {
+        // Auth first
+        user.require_auth();
         let paused: bool = env
             .storage()
             .instance()
@@ -149,16 +156,21 @@ impl SavingsVault {
         if amount <= 0 {
             return Err(soroban_sdk::Error::from_contract_error(1002));
         }
-        user.require_auth();
         let key = (DEPOSIT_KEY, user.clone(), term_seconds);
         let lots: Vec<DepositLot> = env
             .storage()
             .temporary()
             .get(&key)
             .ok_or(soroban_sdk::Error::from_contract_error(1003))?;
-        let balance: i128 = Self::sum_lots(&lots);
-        if balance < amount {
-            return Err(soroban_sdk::Error::from_contract_error(1004));
+        let now = env.ledger().timestamp();
+        // Check that at least one lot has matured; compute total unlocked balance
+        let unlocked_balance: i128 = lots
+            .iter()
+            .filter(|lot| now >= lot.timestamp.saturating_add(lot.term_seconds))
+            .fold(0i128, |acc, lot| acc + lot.amount);
+        if unlocked_balance < amount {
+            // Some lots may still be locked
+            return Err(soroban_sdk::Error::from_contract_error(1006));
         }
 
         let fee_rate: i128 = env
@@ -173,12 +185,18 @@ impl SavingsVault {
             .unwrap_or(0);
         let fee_amount: i128 = (amount * fee_rate) / 10_000;
         let mut amount_left = amount;
-        let now = env.ledger().timestamp();
         let mut updated_lots = Vec::new(&env);
         let mut yield_amount: i128 = 0;
 
         for lot in lots.iter() {
             if amount_left == 0 {
+                updated_lots.push_back(lot);
+                continue;
+            }
+            // Only consume lots whose lock term has elapsed
+            let unlocked = now >= lot.timestamp.saturating_add(lot.term_seconds);
+            if !unlocked {
+                // Term not yet elapsed — keep this lot intact
                 updated_lots.push_back(lot);
                 continue;
             }
@@ -196,6 +214,7 @@ impl SavingsVault {
                 updated_lots.push_back(DepositLot {
                     amount: remaining,
                     timestamp: lot.timestamp,
+                    term_seconds: lot.term_seconds,
                 });
                 amount_left = 0;
             }
