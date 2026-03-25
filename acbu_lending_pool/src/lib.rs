@@ -63,6 +63,8 @@ impl LendingPool {
 
     /// Deposit ACBU into the pool (lender supplies liquidity)
     pub fn deposit(env: Env, lender: Address, amount: i128) -> Result<i128, soroban_sdk::Error> {
+        // Auth first: caller must be the lender themselves
+        lender.require_auth();
         let paused: bool = env.storage().instance().get(&DATA_KEY.paused).unwrap_or(false);
         if paused {
             return Err(soroban_sdk::Error::from_contract_error(2001));
@@ -70,7 +72,6 @@ impl LendingPool {
         if amount <= 0 {
             return Err(soroban_sdk::Error::from_contract_error(2002));
         }
-        lender.require_auth();
         let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
         let client = soroban_sdk::token::Client::new(&env, &acbu);
         client.transfer(&lender, &env.current_contract_address(), &amount);
@@ -81,6 +82,8 @@ impl LendingPool {
 
     /// Withdraw ACBU from the pool
     pub fn withdraw(env: Env, lender: Address, amount: i128) -> Result<(), soroban_sdk::Error> {
+        // Auth first: caller must be the lender themselves
+        lender.require_auth();
         let paused: bool = env.storage().instance().get(&DATA_KEY.paused).unwrap_or(false);
         if paused {
             return Err(soroban_sdk::Error::from_contract_error(2001));
@@ -88,7 +91,6 @@ impl LendingPool {
         if amount <= 0 {
             return Err(soroban_sdk::Error::from_contract_error(2002));
         }
-        lender.require_auth();
         let balance: i128 = env.storage().temporary().get(&lender).ok_or(soroban_sdk::Error::from_contract_error(2003))?;
         if balance < amount {
             return Err(soroban_sdk::Error::from_contract_error(2004));
