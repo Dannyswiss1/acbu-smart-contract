@@ -85,34 +85,12 @@ impl Escrow {
             return Err(soroban_sdk::Error::from_contract_error(3002));
         }
         payer.require_auth();
-        let key = (symbol_short!("ESCROW"), escrow_id);
+        let key = EscrowId(payer.clone(), escrow_id);
+
         if env.storage().temporary().has(&key) {
             return Err(soroban_sdk::Error::from_contract_error(3005));
         }
-        let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap().unwrap();
-        let client = soroban_sdk::token::Client::new(&env, &acbu);
-        client.transfer(&payer, &env.current_contract_address(), &amount);
-        env.storage().temporary().set(&key, &(payer.clone(), payee.clone(), amount));
-        env.events().publish(
-            (symbol_short!("EscrowCreated"), escrow_id),
-            EscrowCreatedEvent {
-                escrow_id,
-                payer: payer.clone(),
-                payee: payee.clone(),
-                amount,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
 
-        // Scope key to (payer, escrow_id) — prevents collisions across payers
-        let key = EscrowId(payer.clone(), escrow_id);
-
-        // Guard against silent overwrite of an existing escrow
-        if env.storage().temporary().has(&key) {
-            return Err(soroban_sdk::Error::from_contract_error(3005)); // ESCROW_ALREADY_EXISTS
-        }
-
-        // Resolve stored token address from instance storage.
         let acbu: Address = env
             .storage()
             .instance()
@@ -124,7 +102,17 @@ impl Escrow {
         env.storage()
             .temporary()
             .set(&key, &(payer.clone(), payee.clone(), amount));
-        // ... events unchanged
+        env.events().publish(
+            (symbol_short!("esc_crtd"), escrow_id),
+            EscrowCreatedEvent {
+                escrow_id,
+                payer,
+                payee,
+                amount,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
         Ok(())
     }
 
@@ -149,28 +137,46 @@ impl Escrow {
         admin.require_auth();
 
         let key = EscrowId(payer.clone(), escrow_id);
-        let (_payer, _payee, _amount): (Address, Address, i128) = env
+        let (_stored_payer, payee, amount): (Address, Address, i128) = env
             .storage()
             .temporary()
             .get(&key)
             .ok_or(soroban_sdk::Error::from_contract_error(3003))?;
 
+        let acbu: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.acbu_token)
+            .expect("acbu_token not set — contract not initialized");
+        let client = soroban_sdk::token::Client::new(&env, &acbu);
+        client.transfer(&env.current_contract_address(), &payee, &amount);
+
         env.storage().temporary().remove(&key);
-        // ... transfer + event unchanged
+        env.events().publish(
+            (symbol_short!("esc_rel"), escrow_id),
+            EscrowReleasedEvent {
+                escrow_id,
+                payee,
+                amount,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
         Ok(())
     }
 
     /// Refund escrow: payer gets ACBU back (admin or dispute resolution)
     /// key is same as release since it identifies which escrow to refund
     pub fn refund(env: Env, escrow_id: u64, payer: Address) -> Result<(), soroban_sdk::Error> {
-        let _admin: Address = env
+        let admin: Address = env
             .storage()
             .instance()
             .get(&DATA_KEY.admin)
             .expect("admin not set — contract not initialized");
+        admin.require_auth();
 
         let key = EscrowId(payer.clone(), escrow_id);
-        let (stored_payer, _payee, _amount): (Address, Address, i128) = env
+        let (stored_payer, _payee, amount): (Address, Address, i128) = env
             .storage()
             .temporary()
             .get(&key)
@@ -180,8 +186,25 @@ impl Escrow {
             return Err(soroban_sdk::Error::from_contract_error(3004));
         }
 
+        let acbu: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.acbu_token)
+            .expect("acbu_token not set — contract not initialized");
+        let client = soroban_sdk::token::Client::new(&env, &acbu);
+        client.transfer(&env.current_contract_address(), &payer, &amount);
+
         env.storage().temporary().remove(&key);
-        // ... transfer + event unchanged
+        env.events().publish(
+            (symbol_short!("esc_ref"), escrow_id),
+            EscrowRefundedEvent {
+                escrow_id,
+                payer,
+                amount,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
         Ok(())
     }
 

@@ -67,6 +67,8 @@ impl ReserveTrackerContract {
         // Authorize admin
         Self::check_admin(&env);
 
+        let current_time = env.ledger().timestamp();
+
         // Update reserves map
         let mut reserves: Map<CurrencyCode, ReserveData> = env
             .storage()
@@ -77,12 +79,9 @@ impl ReserveTrackerContract {
             currency: currency.clone(),
             amount,
             value_usd,
-            timestamp: env.ledger().timestamp(),
+            timestamp: current_time,
         };
 
-        // Update reserves map
-        let mut reserves: Map<CurrencyCode, ReserveData> =
-            env.storage().instance().get(&DATA_KEY.reserves).unwrap_or(Map::new(&env));
         reserves.set(currency.clone(), reserve_data);
         env.storage().instance().set(&DATA_KEY.reserves, &reserves);
 

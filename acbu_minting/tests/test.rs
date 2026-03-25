@@ -257,10 +257,7 @@ fn test_mint_from_fiat() {
         {
             let event_data: MintEvent = event.2.into_val(&env);
             assert_eq!(event_data.acbu_amount, expected_acbu);
-            assert!(event_data
-                .transaction_id
-                .to_string()
-                .contains("mint_fiat_tx"));
+            assert_eq!(event_data.transaction_id, fintech_tx_id.clone());
             found = true;
             break;
         }

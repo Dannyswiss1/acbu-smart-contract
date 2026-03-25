@@ -156,7 +156,7 @@ impl MintingContract {
         _currency: SorobanString,
         amount: i128,
         recipient: Address,
-        _fintech_tx_id: SorobanString,
+        fintech_tx_id: SorobanString,
     ) -> i128 {
         Self::check_paused(&env);
         admin.require_auth();
@@ -194,6 +194,11 @@ impl MintingContract {
         let usd_after_fee = calculate_amount_after_fee(usd_value, fee_rate);
         let acbu_amount = (usd_after_fee * DECIMALS) / acbu_rate;
 
+        let used_key = (symbol_short!("USED_TX"), fintech_tx_id.clone());
+        if env.storage().persistent().has(&used_key) {
+            panic!("Duplicate fintech_tx_id");
+        }
+
         // Mark the tx_id as used before minting (checks-effects-interactions pattern)
         // to prevent any reentrancy-based double-spend via cross-contract calls.
         env.storage().persistent().set(&used_key, &true);
@@ -206,9 +211,8 @@ impl MintingContract {
         let fee = calculate_fee(usd_value, fee_rate);
 
         // Emit MintEvent
-        let tx_id = SorobanString::from_str(&env, "mint_fiat_tx");
         let mint_event = MintEvent {
-            transaction_id: tx_id,
+            transaction_id: fintech_tx_id,
             user: recipient.clone(),
             usdc_amount: usd_value,
             acbu_amount,

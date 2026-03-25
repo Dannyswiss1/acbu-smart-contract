@@ -66,6 +66,7 @@ impl LendingPool {
         if amount <= 0 {
             return Err(soroban_sdk::Error::from_contract_error(2002));
         }
+        lender.require_auth();
         let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
         let client = soroban_sdk::token::Client::new(&env, &acbu);
         client.transfer(&lender, &env.current_contract_address(), &amount);
@@ -83,6 +84,7 @@ impl LendingPool {
         if amount <= 0 {
             return Err(soroban_sdk::Error::from_contract_error(2002));
         }
+        lender.require_auth();
         let balance: i128 = env.storage().temporary().get(&lender).ok_or(soroban_sdk::Error::from_contract_error(2003))?;
         if balance < amount {
             return Err(soroban_sdk::Error::from_contract_error(2004));
