@@ -154,9 +154,17 @@ impl BurningContract {
         );
 
         let fee = calculate_fee(acbu_amount, fee_single);
-        let net_acbu = acbu_amount - fee;
-        let usd_out = (net_acbu * acbu_rate) / DECIMALS;
-        let stoken_out = (usd_out * DECIMALS) / rate;
+        let net_acbu = acbu_amount
+            .checked_sub(fee)
+            .expect("Underflow in net acbu calculation");
+        let usd_out = net_acbu
+            .checked_mul(acbu_rate)
+            .and_then(|v| v.checked_div(DECIMALS))
+            .expect("Overflow in usd out calculation");
+        let stoken_out = usd_out
+            .checked_mul(DECIMALS)
+            .and_then(|v| v.checked_div(rate))
+            .expect("Overflow in stoken out calculation");
 
         let acbu_client = soroban_sdk::token::Client::new(&env, &acbu_token);
         acbu_client.burn(&user, &acbu_amount);
@@ -213,8 +221,13 @@ impl BurningContract {
         );
 
         let total_fee = calculate_fee(acbu_amount, fee_rate);
-        let net_acbu = acbu_amount - total_fee;
-        let usd_total = (net_acbu * acbu_rate) / DECIMALS;
+        let net_acbu = acbu_amount
+            .checked_sub(total_fee)
+            .expect("Underflow in net acbu calculation");
+        let usd_total = net_acbu
+            .checked_mul(acbu_rate)
+            .and_then(|v| v.checked_div(DECIMALS))
+            .expect("Overflow in usd total calculation");
 
         let acbu_client = soroban_sdk::token::Client::new(&env, &acbu_token);
         acbu_client.burn(&user, &acbu_amount);
@@ -270,15 +283,35 @@ impl BurningContract {
             );
 
             let (usd_i, fee_i) = if Some(i) == last_weighted_idx {
-                (usd_total - usd_allocated, total_fee - fee_allocated)
+                (
+                    usd_total
+                        .checked_sub(usd_allocated)
+                        .expect("Underflow in usd_i final slice"),
+                    total_fee
+                        .checked_sub(fee_allocated)
+                        .expect("Underflow in fee_i final slice"),
+                )
             } else {
-                let usd_i = (weight * usd_total) / BASIS_POINTS;
-                let fee_i = (weight * total_fee) / BASIS_POINTS;
-                usd_allocated += usd_i;
-                fee_allocated += fee_i;
+                let usd_i = weight
+                    .checked_mul(usd_total)
+                    .and_then(|v| v.checked_div(BASIS_POINTS))
+                    .expect("Overflow in usd_i calculation");
+                let fee_i = weight
+                    .checked_mul(total_fee)
+                    .and_then(|v| v.checked_div(BASIS_POINTS))
+                    .expect("Overflow in fee_i calculation");
+                usd_allocated = usd_allocated
+                    .checked_add(usd_i)
+                    .expect("Overflow in usd_allocated");
+                fee_allocated = fee_allocated
+                    .checked_add(fee_i)
+                    .expect("Overflow in fee_allocated");
                 (usd_i, fee_i)
             };
-            let native_i = (usd_i * DECIMALS) / rate;
+            let native_i = usd_i
+                .checked_mul(DECIMALS)
+                .and_then(|v| v.checked_div(rate))
+                .expect("Overflow in native_i calculation");
 
             if native_i > 0 {
                 let token = soroban_sdk::token::Client::new(&env, &stoken);

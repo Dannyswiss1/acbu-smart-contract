@@ -103,8 +103,11 @@ impl LendingPool {
         let client = soroban_sdk::token::Client::new(&env, &acbu);
         client.transfer(&lender, &env.current_contract_address(), &amount);
         let existing: i128 = env.storage().temporary().get(&lender).unwrap_or(0);
-        env.storage().temporary().set(&lender, &(existing + amount));
-        Ok(existing + amount)
+        let new_balance = existing
+            .checked_add(amount)
+            .ok_or(soroban_sdk::Error::from_contract_error(2007))?;
+        env.storage().temporary().set(&lender, &new_balance);
+        Ok(new_balance)
     }
 
     /// Withdraw ACBU from the pool
@@ -122,7 +125,10 @@ impl LendingPool {
         if balance < amount {
             return Err(soroban_sdk::Error::from_contract_error(2004));
         }
-        env.storage().temporary().set(&lender, &(balance - amount));
+        let new_balance = balance
+            .checked_sub(amount)
+            .ok_or(soroban_sdk::Error::from_contract_error(2008))?;
+        env.storage().temporary().set(&lender, &new_balance);
         let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
         let client = soroban_sdk::token::Client::new(&env, &acbu);
         client.transfer(&env.current_contract_address(), &lender, &amount);
@@ -209,7 +215,9 @@ impl LendingPool {
         let client = soroban_sdk::token::Client::new(&env, &acbu);
         client.transfer(&borrower, &env.current_contract_address(), &amount);
 
-        loan.amount -= amount;
+        loan.amount = loan.amount
+            .checked_sub(amount)
+            .ok_or(soroban_sdk::Error::from_contract_error(2009))?;
         if loan.amount == 0 {
             env.storage().temporary().remove(&key);
         } else {

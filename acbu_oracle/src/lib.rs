@@ -275,9 +275,17 @@ impl OracleContract {
             if let Some(weight) = basket_weights.get(currency.clone()) {
                 if let Some(rate_data) = Self::get_rate_internal(&env, &currency) {
                     // Weight is in basis points (e.g., 1800 = 18%)
-                    let contribution = (rate_data.rate_usd * weight) / 10_000;
-                    weighted_sum += contribution;
-                    total_weight += weight;
+                    let contribution = rate_data
+                        .rate_usd
+                        .checked_mul(weight)
+                        .and_then(|v| v.checked_div(10_000))
+                        .expect("Overflow in oracle contribution calculation");
+                    weighted_sum = weighted_sum
+                        .checked_add(contribution)
+                        .expect("Overflow in oracle weighted sum calculation");
+                    total_weight = total_weight
+                        .checked_add(weight)
+                        .expect("Overflow in oracle total weight calculation");
                 }
             }
         }
@@ -290,7 +298,10 @@ impl OracleContract {
         }
 
         // Normalize to ensure weights sum to 100%
-        (weighted_sum * 10_000) / total_weight
+        weighted_sum
+            .checked_mul(10_000)
+            .and_then(|v| v.checked_div(total_weight))
+            .expect("Overflow in oracle rate normalization")
     }
 
     /// Basket currencies in declaration order (for S-token mint/burn loops).

@@ -138,8 +138,9 @@ impl ReserveTrackerContract {
 
         for entry in reserves.iter() {
             let data = entry.1;
-            // Saturate so summing many basket lines cannot overflow i128 and trap the VM.
-            total_value = total_value.saturating_add(data.value_usd);
+            total_value = total_value
+                .checked_add(data.value_usd)
+                .expect("Overflow in reserve value calculation");
         }
 
         total_value

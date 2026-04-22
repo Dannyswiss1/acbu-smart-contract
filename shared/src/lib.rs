@@ -124,6 +124,7 @@ pub enum ContractError {
     OracleError,
     ReserveError,
     InsufficientBalance,
+    ArithmeticError,
 }
 
 /// Constants
@@ -138,11 +139,16 @@ pub const OUTLIER_THRESHOLD_BPS: i128 = 300; // 3% deviation for outlier detecti
 
 /// Utility functions
 pub fn calculate_fee(amount: i128, fee_rate_bps: i128) -> i128 {
-    (amount * fee_rate_bps) / BASIS_POINTS
+    amount
+        .checked_mul(fee_rate_bps)
+        .and_then(|v| v.checked_div(BASIS_POINTS))
+        .expect("Overflow in fee calculation")
 }
 
 pub fn calculate_amount_after_fee(amount: i128, fee_rate_bps: i128) -> i128 {
-    amount - calculate_fee(amount, fee_rate_bps)
+    amount
+        .checked_sub(calculate_fee(amount, fee_rate_bps))
+        .expect("Underflow in amount after fee calculation")
 }
 
 /// Calculate median of sorted values
@@ -167,7 +173,13 @@ pub fn median(values: soroban_sdk::Vec<i128>) -> Option<i128> {
     let mid = n / 2;
     #[allow(clippy::manual_is_multiple_of)]
     if n % 2 == 0 {
-        Some((sorted.get(mid - 1).unwrap() + sorted.get(mid).unwrap()) / 2)
+        let v1 = sorted.get(mid - 1).unwrap();
+        let v2 = sorted.get(mid).unwrap();
+        Some(
+            v1.checked_add(v2)
+                .and_then(|v| v.checked_div(2))
+                .expect("Overflow in median calculation"),
+        )
     } else {
         Some(sorted.get(mid).unwrap())
     }
@@ -179,10 +191,12 @@ pub fn calculate_deviation(value1: i128, value2: i128) -> i128 {
         return i128::MAX;
     }
     let diff = if value1 > value2 {
-        value1 - value2
+        value1.checked_sub(value2).expect("Underflow in deviation diff")
     } else {
-        value2 - value1
+        value2.checked_sub(value1).expect("Underflow in deviation diff")
     };
-    (diff * BASIS_POINTS) / value2
+    diff.checked_mul(BASIS_POINTS)
+        .and_then(|v| v.checked_div(value2))
+        .expect("Overflow in deviation calculation")
 }
 
