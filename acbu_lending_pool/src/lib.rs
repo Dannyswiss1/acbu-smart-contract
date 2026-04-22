@@ -68,38 +68,63 @@ pub struct RepaymentEvent {
     pub timestamp: u64,
 }
 
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum Error {
+    NotFound = 1,
+    InvalidState = 2,
+    Unauthorized = 3,
+    AlreadyInitialized = 4,
+    Paused = 2001,
+    InvalidAmount = 2002,
+    InsufficientBalance = 2004,
+    LoanAlreadyExists = 2005,
+    InvalidRepaymentAmount = 2006,
+}
+
 #[contract]
 pub struct LendingPool;
 
 #[contractimpl]
 impl LendingPool {
     /// Initialize the lending pool contract
-    pub fn initialize(env: Env, admin: Address, acbu_token: Address, fee_rate_bps: i128) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        acbu_token: Address,
+        fee_rate_bps: i128,
+    ) -> Result<(), Error> {
         if env.storage().instance().has(&DATA_KEY.admin) {
-            panic!("Contract already initialized");
+            return Err(Error::AlreadyInitialized);
         }
         if fee_rate_bps < 0 || fee_rate_bps > BASIS_POINTS {
-            panic!("Invalid fee rate");
+            return Err(Error::InvalidAmount);
         }
         env.storage().instance().set(&DATA_KEY.admin, &admin);
         env.storage().instance().set(&DATA_KEY.acbu_token, &acbu_token);
         env.storage().instance().set(&DATA_KEY.fee_rate, &fee_rate_bps);
         env.storage().instance().set(&DATA_KEY.paused, &false);
         env.storage().instance().set(&DATA_KEY.version, &VERSION);
+        Ok(())
     }
 
     /// Deposit ACBU into the pool (lender supplies liquidity)
-    pub fn deposit(env: Env, lender: Address, amount: i128) -> Result<i128, soroban_sdk::Error> {
+    pub fn deposit(env: Env, lender: Address, amount: i128) -> Result<i128, Error> {
         // Auth first: caller must be the lender themselves
         lender.require_auth();
         let paused: bool = env.storage().instance().get(&DATA_KEY.paused).unwrap_or(false);
         if paused {
-            return Err(soroban_sdk::Error::from_contract_error(2001));
+            return Err(Error::Paused);
         }
         if amount <= 0 {
-            return Err(soroban_sdk::Error::from_contract_error(2002));
+            return Err(Error::InvalidAmount);
         }
-        let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
+        let acbu: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.acbu_token)
+            .ok_or(Error::NotFound)?;
         let client = soroban_sdk::token::Client::new(&env, &acbu);
         client.transfer(&lender, &env.current_contract_address(), &amount);
         let existing: i128 = env.storage().temporary().get(&lender).unwrap_or(0);
@@ -108,22 +133,26 @@ impl LendingPool {
     }
 
     /// Withdraw ACBU from the pool
-    pub fn withdraw(env: Env, lender: Address, amount: i128) -> Result<(), soroban_sdk::Error> {
+    pub fn withdraw(env: Env, lender: Address, amount: i128) -> Result<(), Error> {
         // Auth first: caller must be the lender themselves
         lender.require_auth();
         let paused: bool = env.storage().instance().get(&DATA_KEY.paused).unwrap_or(false);
         if paused {
-            return Err(soroban_sdk::Error::from_contract_error(2001));
+            return Err(Error::Paused);
         }
         if amount <= 0 {
-            return Err(soroban_sdk::Error::from_contract_error(2002));
+            return Err(Error::InvalidAmount);
         }
-        let balance: i128 = env.storage().temporary().get(&lender).ok_or(soroban_sdk::Error::from_contract_error(2003))?;
+        let balance: i128 = env.storage().temporary().get(&lender).ok_or(Error::NotFound)?;
         if balance < amount {
-            return Err(soroban_sdk::Error::from_contract_error(2004));
+            return Err(Error::InsufficientBalance);
         }
         env.storage().temporary().set(&lender, &(balance - amount));
-        let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
+        let acbu: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.acbu_token)
+            .ok_or(Error::NotFound)?;
         let client = soroban_sdk::token::Client::new(&env, &acbu);
         client.transfer(&env.current_contract_address(), &lender, &amount);
         Ok(())
@@ -141,22 +170,26 @@ impl LendingPool {
         amount: i128,
         collateral_amount: i128,
         loan_id: u64,
-    ) -> Result<(), soroban_sdk::Error> {
+    ) -> Result<(), Error> {
         borrower.require_auth();
         let paused: bool = env.storage().instance().get(&DATA_KEY.paused).unwrap_or(false);
         if paused {
-            return Err(soroban_sdk::Error::from_contract_error(2001));
+            return Err(Error::Paused);
         }
 
         let key = LoanId(borrower.clone(), loan_id);
         if env.storage().temporary().has(&key) {
-            return Err(soroban_sdk::Error::from_contract_error(2005));
+            return Err(Error::LoanAlreadyExists);
         }
 
-        let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
+        let acbu: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.acbu_token)
+            .ok_or(Error::NotFound)?;
         let client = soroban_sdk::token::Client::new(&env, &acbu);
 
-        // In MVP, we just transfer ACBU to borrower. 
+        // In MVP, we just transfer ACBU to borrower.
         // Real logic would check collateral value via oracle.
         client.transfer(&env.current_contract_address(), &borrower, &amount);
 
@@ -191,7 +224,7 @@ impl LendingPool {
         borrower: Address,
         amount: i128,
         loan_id: u64,
-    ) -> Result<(), soroban_sdk::Error> {
+    ) -> Result<(), Error> {
         borrower.require_auth();
 
         let key = LoanId(borrower.clone(), loan_id);
@@ -199,13 +232,17 @@ impl LendingPool {
             .storage()
             .temporary()
             .get(&key)
-            .ok_or(soroban_sdk::Error::from_contract_error(2003))?;
+            .ok_or(Error::NotFound)?;
 
         if amount > loan.amount {
-            return Err(soroban_sdk::Error::from_contract_error(2006));
+            return Err(Error::InvalidRepaymentAmount);
         }
 
-        let acbu: Address = env.storage().instance().get(&DATA_KEY.acbu_token).unwrap();
+        let acbu: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.acbu_token)
+            .ok_or(Error::NotFound)?;
         let client = soroban_sdk::token::Client::new(&env, &acbu);
         client.transfer(&borrower, &env.current_contract_address(), &amount);
 
@@ -229,15 +266,23 @@ impl LendingPool {
         Ok(())
     }
 
-    pub fn pause(env: Env) -> Result<(), soroban_sdk::Error> {
-        let admin: Address = env.storage().instance().get(&DATA_KEY.admin).unwrap();
+    pub fn pause(env: Env) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.admin)
+            .ok_or(Error::Unauthorized)?;
         admin.require_auth();
         env.storage().instance().set(&DATA_KEY.paused, &true);
         Ok(())
     }
 
-    pub fn unpause(env: Env) -> Result<(), soroban_sdk::Error> {
-        let admin: Address = env.storage().instance().get(&DATA_KEY.admin).unwrap();
+    pub fn unpause(env: Env) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.admin)
+            .ok_or(Error::Unauthorized)?;
         admin.require_auth();
         env.storage().instance().set(&DATA_KEY.paused, &false);
         Ok(())
@@ -247,8 +292,12 @@ impl LendingPool {
         VERSION
     }
 
-    pub fn migrate(env: Env) {
-        let admin: Address = env.storage().instance().get(&DATA_KEY.admin).unwrap();
+    pub fn migrate(env: Env) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.admin)
+            .ok_or(Error::Unauthorized)?;
         admin.require_auth();
 
         let current_version = VERSION;
@@ -258,12 +307,18 @@ impl LendingPool {
                 .instance()
                 .set(&DATA_KEY.version, &current_version);
         }
+        Ok(())
     }
 
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let admin: Address = env.storage().instance().get(&DATA_KEY.admin).unwrap();
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DATA_KEY.admin)
+            .ok_or(Error::Unauthorized)?;
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
     }
 }
 
