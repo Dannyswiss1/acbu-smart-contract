@@ -149,11 +149,16 @@ pub const OUTLIER_THRESHOLD_BPS: i128 = 300; // 3% deviation for outlier detecti
 
 /// Utility functions
 pub fn calculate_fee(amount: i128, fee_rate_bps: i128) -> i128 {
-    (amount * fee_rate_bps) / BASIS_POINTS
+    amount
+        .checked_mul(fee_rate_bps)
+        .and_then(|v| v.checked_div(BASIS_POINTS))
+        .expect("Overflow in fee calculation")
 }
 
 pub fn calculate_amount_after_fee(amount: i128, fee_rate_bps: i128) -> i128 {
-    amount - calculate_fee(amount, fee_rate_bps)
+    amount
+        .checked_sub(calculate_fee(amount, fee_rate_bps))
+        .expect("Underflow in amount after fee calculation")
 }
 
 /// Calculate median using in-place quickselect algorithm
@@ -227,9 +232,9 @@ pub fn calculate_deviation(value1: i128, value2: i128) -> i128 {
         return i128::MAX;
     }
     let diff = if value1 > value2 {
-        value1 - value2
+        value1.checked_sub(value2).expect("Underflow in deviation diff")
     } else {
-        value2 - value1
+        value2.checked_sub(value1).expect("Underflow in deviation diff")
     };
     (diff * BASIS_POINTS) / value2
 }

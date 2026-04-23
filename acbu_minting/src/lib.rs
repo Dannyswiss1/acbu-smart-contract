@@ -173,9 +173,14 @@ impl MintingContract {
         );
 
         let usdc_after_fee = calculate_amount_after_fee(usdc_amount, fee_rate);
-        let acbu_amount = (usdc_after_fee * DECIMALS) / acbu_rate;
+        let acbu_amount = usdc_after_fee
+            .checked_mul(DECIMALS)
+            .and_then(|v| v.checked_div(acbu_rate))
+            .expect("Overflow in acbu amount calculation");
 
-        let projected_supply = total_supply + acbu_amount;
+        let projected_supply = total_supply
+            .checked_add(acbu_amount)
+            .expect("Overflow in projected supply calculation");
         let reserve_ok: bool = env.invoke_contract(
             &reserve_tracker_addr,
             &Symbol::new(&env, "is_reserve_sufficient"),
@@ -265,8 +270,12 @@ impl MintingContract {
         );
 
         let fee_acbu = calculate_fee(acbu_amount, fee_rate);
-        let net_mint = acbu_amount - fee_acbu;
-        let projected_supply = total_supply + acbu_amount;
+        let net_mint = acbu_amount
+            .checked_sub(fee_acbu)
+            .expect("Underflow in net mint calculation");
+        let projected_supply = total_supply
+            .checked_add(acbu_amount)
+            .expect("Overflow in projected supply calculation");
 
         let reserve_ok: bool = env.invoke_contract(
             &reserve_tracker_addr,
@@ -283,7 +292,10 @@ impl MintingContract {
             vec![&env],
         );
 
-        let usd_total: i128 = (acbu_amount * acbu_rate) / DECIMALS;
+        let usd_total: i128 = acbu_amount
+            .checked_mul(acbu_rate)
+            .and_then(|v| v.checked_div(DECIMALS))
+            .expect("Overflow in usd total calculation");
 
         for currency in currencies.iter() {
             let weight: i128 = env.invoke_contract(
@@ -310,8 +322,14 @@ impl MintingContract {
                 vec![&env, currency.clone().into_val(&env)],
             );
 
-            let usd_i = (weight * usd_total) / BASIS_POINTS;
-            let native_i = (usd_i * DECIMALS) / rate;
+            let usd_i = weight
+                .checked_mul(usd_total)
+                .and_then(|v| v.checked_div(BASIS_POINTS))
+                .expect("Overflow in usd_i calculation");
+            let native_i = usd_i
+                .checked_mul(DECIMALS)
+                .and_then(|v| v.checked_div(rate))
+                .expect("Overflow in native_i calculation");
             if native_i > 0 {
                 let token = soroban_sdk::token::Client::new(&env, &stoken);
                 token.transfer(&user, &vault, &native_i);
@@ -408,15 +426,23 @@ impl MintingContract {
             panic!("Invalid oracle rate");
         }
 
-        let usd_gross = (s_token_amount * rate) / DECIMALS;
+        let usd_gross = s_token_amount
+            .checked_mul(rate)
+            .and_then(|v| v.checked_div(DECIMALS))
+            .expect("Overflow in usd_gross calculation");
         if usd_gross < min_amount || usd_gross > max_amount {
             panic!("Invalid mint amount");
         }
 
         let usd_after_fee = calculate_amount_after_fee(usd_gross, fee_single);
-        let acbu_amount = (usd_after_fee * DECIMALS) / acbu_rate;
+        let acbu_amount = usd_after_fee
+            .checked_mul(DECIMALS)
+            .and_then(|v| v.checked_div(acbu_rate))
+            .expect("Overflow in acbu amount calculation");
 
-        let projected_supply = total_supply + acbu_amount;
+        let projected_supply = total_supply
+            .checked_add(acbu_amount)
+            .expect("Overflow in projected supply calculation");
         let reserve_ok: bool = env.invoke_contract(
             &reserve_tracker_addr,
             &Symbol::new(&env, "is_reserve_sufficient"),
@@ -524,15 +550,23 @@ impl MintingContract {
             panic!("Invalid oracle rate");
         }
 
-        let usd_gross = (fiat_amount * rate) / DECIMALS;
+        let usd_gross = fiat_amount
+            .checked_mul(rate)
+            .and_then(|v| v.checked_div(DECIMALS))
+            .expect("Overflow in usd_gross calculation");
         if usd_gross < min_amount || usd_gross > max_amount {
             panic!("Invalid mint amount");
         }
 
         let usd_after_fee = calculate_amount_after_fee(usd_gross, fee_single);
-        let acbu_amount = (usd_after_fee * DECIMALS) / acbu_rate;
+        let acbu_amount = usd_after_fee
+            .checked_mul(DECIMALS)
+            .and_then(|v| v.checked_div(acbu_rate))
+            .expect("Overflow in acbu amount calculation");
 
-        let projected_supply = total_supply + acbu_amount;
+        let projected_supply = total_supply
+            .checked_add(acbu_amount)
+            .expect("Overflow in projected supply calculation");
         let reserve_ok: bool = env.invoke_contract(
             &reserve_tracker_addr,
             &Symbol::new(&env, "is_reserve_sufficient"),

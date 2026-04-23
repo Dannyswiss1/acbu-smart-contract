@@ -237,7 +237,12 @@ impl SavingsVault {
         let unlocked_balance: i128 = lots
             .iter()
             .filter(|lot| now >= lot.timestamp.saturating_add(lot.term_seconds))
-            .fold(0i128, |acc, lot| acc + lot.amount);
+            .fold(Ok(0i128), |acc: Result<i128, soroban_sdk::Error>, lot| {
+                acc.and_then(|a| {
+                    a.checked_add(lot.amount)
+                        .ok_or(soroban_sdk::Error::from_contract_error(1005))
+                })
+            })?;
 
         if unlocked_balance < amount {
             return Err(Error::InsufficientUnlocked);
@@ -263,14 +268,22 @@ impl SavingsVault {
                 continue;
             }
             if lot.amount <= amount_left {
-                amount_left -= lot.amount;
+                amount_left = amount_left
+                    .checked_sub(lot.amount)
+                    .ok_or(soroban_sdk::Error::from_contract_error(1004))?;
                 let elapsed = now.saturating_sub(lot.timestamp);
-                yield_amount += Self::calculate_yield(lot.amount, yield_rate, elapsed)?;
+                yield_amount = yield_amount
+                    .checked_add(Self::calculate_yield(lot.amount, yield_rate, elapsed)?)
+                    .ok_or(soroban_sdk::Error::from_contract_error(1005))?;
             } else {
                 let consumed = amount_left;
-                let remaining = lot.amount - consumed;
+                let remaining = lot.amount
+                    .checked_sub(consumed)
+                    .ok_or(soroban_sdk::Error::from_contract_error(1004))?;
                 let elapsed = now.saturating_sub(lot.timestamp);
-                yield_amount += Self::calculate_yield(consumed, yield_rate, elapsed)?;
+                yield_amount = yield_amount
+                    .checked_add(Self::calculate_yield(consumed, yield_rate, elapsed)?)
+                    .ok_or(soroban_sdk::Error::from_contract_error(1005))?;
                 updated_lots.push_back(DepositLot {
                     amount: remaining,
                     timestamp: lot.timestamp,
@@ -290,8 +303,12 @@ impl SavingsVault {
             env.storage().temporary().set(&key, &updated_lots);
         }
 
-        let net_amount: i128 = amount - fee_amount;
-        let payout_amount: i128 = net_amount + yield_amount;
+        let net_amount: i128 = amount
+            .checked_sub(fee_amount)
+            .ok_or(soroban_sdk::Error::from_contract_error(1004))?;
+        let payout_amount: i128 = net_amount
+            .checked_add(yield_amount)
+            .ok_or(soroban_sdk::Error::from_contract_error(1005))?;
 
         // Single storage read for the token — reuse the client for both transfers.
         let acbu = Self::load_acbu_token(&env)?;
@@ -380,7 +397,9 @@ fn migrate_v0_to_v1(_env: Env) {
     fn sum_lots(lots: &Vec<DepositLot>) -> i128 {
         let mut total = 0i128;
         for lot in lots.iter() {
-            total += lot.amount;
+            total = total
+                .checked_add(lot.amount)
+                .expect("Overflow in total balance calculation");
         }
         total
     }
