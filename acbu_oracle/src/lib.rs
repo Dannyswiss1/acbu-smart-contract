@@ -453,7 +453,16 @@ impl OracleContract {
     }
 }
 
-fn migrate_v0_to_v1(_env: Env) {
-    // Migration logic
+// 1. Collect the validator addresses that contributed
+let mut contributors: Vec<Address> = Vec::new(env);
+for validator in validator_set.iter() {
+    contributors.push_back(validator);
 }
 
+// 2. Publish the enhanced event
+// Current: env.events().publish((symbol!("oracle"), symbol!("rate_update")), new_rate);
+// Fixed:
+env.events().publish(
+    (symbol!("oracle"), symbol!("rate_update")), 
+    (new_rate, contributors) // Now includes the non-empty validator metadata
+);
